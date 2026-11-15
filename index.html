@@ -26,7 +26,7 @@
   body{
     background:var(--bg); color:var(--txt); font:15px/1.4 var(--sans);
     display:flex; flex-direction:column; height:100dvh; overflow:hidden;
-    padding:env(safe-area-inset-top) 14px env(safe-area-inset-bottom);
+    padding:max(env(safe-area-inset-top), var(--safe-area-inset-top, 0px)) 14px max(env(safe-area-inset-bottom), var(--safe-area-inset-bottom, 0px));
   }
   svg.i{width:18px;height:18px;flex:0 0 auto;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 
@@ -353,11 +353,16 @@ function saveNames(){ localStorage.setItem('pf_names', JSON.stringify(names)); }
 
 // ---------- feature detection ----------
 const canWebBT = !!(navigator.bluetooth && navigator.bluetooth.requestLEScan);
+// Android app build (Capacitor): use the phone's native Bluetooth scanner
+const NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+const BLE = NATIVE ? window.Capacitor.Plugins.BluetoothLe : null;
 const bannerEl = $('#banner');
 function showBanner(html){ bannerEl.innerHTML = icon('alert')+'<span style="flex:1">'+html+'</span><button class="link-stop" aria-label="Dismiss" onclick="hideBanner()"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>'; bannerEl.classList.add('show'); }
 function hideBanner(){ bannerEl.classList.remove('show'); }
 
-if(!navigator.bluetooth){
+if(NATIVE){
+  // real scanning available — nothing to warn about
+}else if(!navigator.bluetooth){
   showBanner('This browser can’t scan Bluetooth (<b>iPhone/Safari don’t support it</b>). Running in <b>Demo mode</b> so you can try it. For real scanning use <b>Chrome/Edge on Android or a computer</b>.');
   setDemo(true, true);
 }else if(!canWebBT){
@@ -489,7 +494,67 @@ setInterval(()=>{
 // ============================================================
 //  REAL BLUETOOTH SCAN
 // ============================================================
+// ---------- native (Android app) ----------
+let nativeListener = null;
+function hexToBytes(h){ const out=[]; const c=(h||'').replace(/[^0-9a-f]/gi,''); for(let i=0;i+1<c.length;i+=2) out.push(parseInt(c.substr(i,2),16)); return out; }
+async function startNativeScan(){
+  try{
+    await BLE.initialize({ androidNeverForLocation:false });
+    const en = await BLE.isEnabled();
+    if(!en.value){
+      try{ await BLE.requestEnable(); }catch(_){}
+      if(!(await BLE.isEnabled()).value){ showBanner('Bluetooth is off. Turn on <b>Bluetooth</b> and tap <b>Scan</b> again.'); return; }
+    }
+    try{
+      const loc = await BLE.isLocationEnabled();
+      if(!loc.value){
+        showBanner('Android needs <b>Location</b> switched on to scan for Bluetooth devices. <a href="#" id="openLoc" style="color:var(--peri)">Open settings</a>');
+        $('#openLoc').onclick=(e)=>{ e.preventDefault(); BLE.openLocationSettings(); };
+        return;
+      }
+    }catch(_){}
+    hideBanner();
+    if(nativeListener){ try{ await nativeListener.remove(); }catch(_){} }
+    nativeListener = await BLE.addListener('onScanResult', onNativeResult);
+    await BLE.requestLEScan({ allowDuplicates:true, scanMode:2 /* low latency */ });
+    setScanning(true);
+  }catch(err){
+    showBanner('Couldn’t start Bluetooth scan: '+escapeHtml(String(err && err.message || err))+'. Check that <b>Nearby devices</b> and <b>Location</b> permissions are allowed for PhoneFinder in Settings.');
+    setScanning(false);
+  }
+}
+function onNativeResult(r){
+  const dev = r.device || {};
+  const id = dev.deviceId || 'dev';
+  const services = (r.uuids||[]).slice();
+  Object.keys(r.serviceData||{}).forEach(u=>{ if(!services.includes(u)) services.push(u); });
+  let companyId=null, appleType=null, mfrHex='';
+  const md = r.manufacturerData || {};
+  const keys = Object.keys(md);
+  if(keys.length){
+    companyId = parseInt(keys[0],10);
+    const bytes = hexToBytes(md[keys[0]]);
+    mfrHex = bytes.slice(0,12).map(b=>b.toString(16).padStart(2,'0')).join(' ');
+    if(companyId===0x004C && bytes.length) appleType = bytes[0];
+  }
+  const nm = r.localName || dev.name || '';
+  upsert(id, {
+    companyId, appleType, mfrHex,
+    advName: nm, baseName: nm || 'Bluetooth device',
+    rssi: typeof r.rssi==='number' ? r.rssi : -100,
+    txPower: (typeof r.txPower==='number' && r.txPower!==127) ? r.txPower : undefined,
+    services, demo:false
+  });
+  renderListThrottled();
+}
+async function stopNativeScan(){
+  try{ await BLE.stopLEScan(); }catch(_){}
+  if(nativeListener){ try{ await nativeListener.remove(); }catch(_){} nativeListener=null; }
+  setScanning(false);
+}
+
 async function startRealScan(){
+  if(NATIVE) return startNativeScan();
   try{
     state.leScan = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements:true });
     navigator.bluetooth.addEventListener('advertisementreceived', onAdv);
@@ -527,6 +592,7 @@ function onAdv(e){
   renderListThrottled();
 }
 function stopRealScan(){
+  if(NATIVE) return stopNativeScan();
   try{ state.leScan && state.leScan.stop(); }catch(_){}
   navigator.bluetooth.removeEventListener('advertisementreceived', onAdv);
   state.leScan = null;
@@ -606,7 +672,7 @@ function setDemo(on, silent){
 }
 $('#demoToggle').onclick = ()=>{
   const next = !state.demo;
-  if(!next && !navigator.bluetooth){
+  if(!next && !NATIVE && !navigator.bluetooth){
     showBanner('Can’t turn Demo off: this browser has no Bluetooth. Use Chrome/Edge on Android or a computer.');
     return;
   }

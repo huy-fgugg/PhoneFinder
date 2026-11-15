@@ -35,7 +35,23 @@ This app is honest about hardware/OS limits:
 | Works with **no app on the other device** | ⚠️ Only if that device is **broadcasting Bluetooth** (most phones/earbuds/watches do). True "find it even when off / via a global network" is exclusive to Apple Find My and Google Find My Device. |
 | Works on **all devices** | ⚠️ Real scanning needs **Chrome or Edge on Android / desktop**. **iPhone browsers don't support Bluetooth scanning at all.** A built-in **Demo mode** lets you try the full experience on any phone. |
 
-## Running it
+## Android app (APK)
+
+The app is also packaged as an Android app with [Capacitor](https://capacitorjs.com). The APK uses **Android's native Bluetooth scanner**, so it needs **no Chrome flags** and works on any Android phone with Bluetooth LE (Android 7+).
+
+**Install:** copy `PhoneFinder.apk` to your phone, open it, and allow *Install unknown apps* when asked. On first scan, allow **Nearby devices** and **Location** (Android needs Location switched on to scan for Bluetooth).
+
+**Build it yourself** (needs Node, JDK 21 and the Android SDK):
+```bash
+npm install
+npm run apk     # copies index.html into the app and runs Gradle
+# -> android/app/build/outputs/apk/debug/app-debug.apk
+```
+The same `index.html` powers both the website and the app; it detects when it's running inside the app and switches to the native scanner.
+
+There is no iPhone app build: that would need a Mac with Xcode and an Apple developer account.
+
+## Running it in a browser
 
 ### Try the UI anywhere (Demo mode)
 Just open the page. If your browser can't scan, it auto-switches to Demo mode with simulated devices so you can see how tracking, the arrow, and the beeping work.

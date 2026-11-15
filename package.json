@@ -1,0 +1,19 @@
+{
+  "name": "phonefinder",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Bluetooth proximity finder for lost phones",
+  "scripts": {
+    "build:www": "mkdir -p www && cp index.html www/index.html",
+    "sync": "npm run build:www && npx cap sync android",
+    "apk": "npm run sync && cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor-community/bluetooth-le": "^8.3.0",
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/core": "^8.6.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.6.2"
+  }
+}

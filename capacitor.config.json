@@ -1,0 +1,19 @@
+{
+  "appId": "app.phonefinder.finder",
+  "appName": "PhoneFinder",
+  "webDir": "www",
+  "plugins": {
+    "BluetoothLe": {
+      "displayStrings": {
+        "scanning": "Scanning for nearby devices\u2026",
+        "cancel": "Cancel",
+        "availableDevices": "Available devices",
+        "noDeviceFound": "No device found"
+      }
+    }
+  },
+  "backgroundColor": "#0f1626",
+  "android": {
+    "backgroundColor": "#0f1626"
+  }
+}
