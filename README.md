@@ -5,7 +5,20 @@ A Bluetooth **proximity finder** web app to help locate a lost device. Single fi
 Open `index.html` — the screen splits into:
 
 - **Top (Finder):** the device you're tracking — a signal ring, an estimated distance, a direction arrow, and a beep that **speeds up and rises in pitch as you get closer**.
-- **Bottom (Nearby devices):** a live list of Bluetooth devices around you. Tap one for details, rename it, or tap **Track**.
+- **Bottom (Nearby devices):** a live list of Bluetooth devices around you, sorted into **📱 Phones & tablets** and **🎧 Other devices** (tabs: All / Phones / Devices). Tap one for details, rename it, or tap **Track**.
+
+### How devices are identified
+Most phones don't broadcast a readable name, so the app works out what a device is from the data it *does* broadcast:
+- **Manufacturer ID** (Apple, Samsung, Google, Microsoft, Xiaomi, Huawei, Garmin, Sony…)
+- **Apple Continuity type** — tells an iPhone/iPad apart from AirPods, an Apple Watch or an AirTag/Find My item
+- **Service UUIDs** — e.g. Google Fast Pair accessories, Tile, Samsung SmartTag, heart-rate straps, keyboards
+- **Advertised name patterns** — "Pixel", "Galaxy S…", "iPhone", "Buds", "Watch"…
+
+The details sheet shows *what it was identified as* and *how we know*.
+
+### Precision
+- Signal strength is run through a **Kalman filter**, so the ring, distance and beep rate are steady instead of jumping around.
+- The direction arrow uses a **weighted average of the strongest headings** from your full-circle turn (your body blocks the signal behind you), and shows a **confidence** rating. Hold the phone flat against your chest while turning for best results.
 
 ## What's real vs. what isn't
 
@@ -14,6 +27,7 @@ This app is honest about hardware/OS limits:
 | You asked for | Reality |
 |---|---|
 | See nearby devices as you walk | ✅ Real, via Web Bluetooth scanning |
+| Sort into Phones vs. Devices, identify the maker/type | ✅ From manufacturer data, Apple Continuity type, services and name |
 | Rename a device | ✅ Saved in your browser |
 | Beep faster the closer you get | ✅ Real, driven by signal strength (RSSI) |
 | Direction arrow to the device | ⚠️ Approximate — built from your phone's **compass + signal strength** as you turn around. Not UWB-precise like a real AirTag (that needs special hardware apps can't use). |

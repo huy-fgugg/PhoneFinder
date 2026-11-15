@@ -117,6 +117,14 @@
   .bars i.on{background:var(--accent)}
   .dev-track{flex:0 0 auto;font-size:11px;font-weight:700;padding:6px 10px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--accent)}
   .device.tracked .dev-track{background:var(--accent);color:#05281a;border-color:transparent}
+  .tabs{display:flex;gap:6px;padding:8px 16px;border-bottom:1px solid var(--line)}
+  .tab{flex:1;font-size:12px;font-weight:650;padding:7px 8px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--muted);cursor:pointer;text-align:center}
+  .tab.on{color:#05281a;background:var(--accent);border-color:transparent}
+  .tab .n{opacity:.75;font-weight:600;margin-left:4px}
+  .group-h{position:sticky;top:0;z-index:2;background:var(--panel2);padding:7px 16px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line)}
+  .tag{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;background:var(--panel);border:1px solid var(--line);color:var(--muted);margin-left:6px;vertical-align:1px}
+  .tag.phone{color:var(--accent2);border-color:rgba(46,160,255,.4)}
+  .conf{font-size:11.5px;color:var(--muted);margin-top:2px}
   .list .empty{padding:26px 16px;text-align:center;color:var(--muted);font-size:13px}
 
   /* ===== Sheet (details / rename) ===== */
@@ -181,6 +189,7 @@
     </div>
 
     <div class="dist">Estimated distance: <b id="distVal">—</b></div>
+    <div class="conf" id="dirConf"></div>
     <div class="hotcold" id="hotcold">&nbsp;</div>
 
     <div class="finder-actions">
@@ -199,6 +208,11 @@
     <span class="count" id="count">0</span>
     <div class="spacer" style="flex:1"></div>
     <button class="scanbtn" id="scanBtn"><span class="pulse"></span><span id="scanLabel">Scan</span></button>
+  </div>
+  <div class="tabs" id="tabs">
+    <button class="tab on" data-f="all">All<span class="n" id="nAll">0</span></button>
+    <button class="tab" data-f="phone">📱 Phones<span class="n" id="nPhone">0</span></button>
+    <button class="tab" data-f="device">🎧 Devices<span class="n" id="nDev">0</span></button>
   </div>
   <div class="list" id="list">
     <div class="empty" id="listEmpty">No devices yet. Tap <b>Scan</b> to look for nearby Bluetooth devices.</div>
@@ -254,6 +268,7 @@ const state = {
   bestHeading: null,
   calibrating:false,
   leScan: null,            // Web Bluetooth scan handle
+  filter: 'all',           // all | phone | device
 };
 
 const names = JSON.parse(localStorage.getItem('pf_names') || '{}'); // id -> custom name
@@ -276,8 +291,72 @@ if(!navigator.bluetooth){
 // ============================================================
 //  DEVICE MODEL
 // ============================================================
+// ============================================================
+//  IDENTIFY: brand + category from what Bluetooth broadcasts
+//  (manufacturer company ID, Apple Continuity type, service UUIDs, name)
+// ============================================================
+const COMPANY = {
+  0x004C:'Apple', 0x0075:'Samsung', 0x00E0:'Google', 0x0006:'Microsoft',
+  0x038F:'Xiaomi', 0x027D:'Huawei', 0x0157:'Huami/Amazfit', 0x0087:'Garmin',
+  0x012D:'Sony', 0x0171:'Amazon', 0x0059:'Nordic (generic chip)',
+  0x02E5:'Espressif (generic chip)', 0x000F:'Broadcom', 0x000A:'Qualcomm',
+  0x001D:'Qualcomm', 0x0499:'Ruuvi', 0x00D7:'Qualcomm'
+};
+const SVC16 = { // 16-bit service UUID -> [label, category]
+  0xFD6F:['Exposure Notification (phone)','phone'],
+  0xFE9F:['Google services','phone'],
+  0xFE2C:['Google Fast Pair accessory','device'],
+  0xFEED:['Tile tracker','device'],
+  0xFD5A:['Samsung SmartTag','device'],
+  0xFEAA:['Eddystone beacon','device'],
+  0x180D:['Heart rate','device'], 0x1812:['Keyboard/mouse (HID)','device'],
+  0x180F:['Battery','device'],    0x1803:['Link loss (tag)','device'],
+  0x184E:['Audio stream','device'], 0x1844:['Volume control','device']
+};
+const APPLE_TYPE = { // Apple Continuity message types
+  0x10:['iPhone / iPad','phone'],
+  0x0C:['iPhone / iPad (Handoff)','phone'],
+  0x0F:['iPhone / Mac (Nearby Action)','phone'],
+  0x07:['AirPods / Beats','device'],
+  0x12:['Find My item (AirTag / offline Apple device)','device'],
+  0x09:['AirPlay target','device'],
+  0x05:['AirDrop','phone'],
+  0x0B:['Apple Watch','device'],
+};
+const NAME_RULES = [
+  [/iphone|pixel(?! ?buds)|galaxy (s|a|z|note|m)\d|\bsm-[asgnfm]\d|redmi|oneplus|moto|xperia|nokia|oppo|vivo|realme|honor|poco|nothing phone|\bphone\b/i,'phone','📱'],
+  [/ipad|tab|tablet/i,'phone','📱'],
+  [/airpods|buds|beats|headphone|earbud|\bwh-|\bwf-|jbl|bose|soundcore|sony wh/i,'device','🎧'],
+  [/watch|band|fitbit|amazfit|garmin|whoop|mi smart band/i,'device','⌚'],
+  [/tv|bravia|roku|chromecast|fire ?tv/i,'device','📺'],
+  [/speaker|soundlink|echo|home mini|nest/i,'device','🔊'],
+  [/macbook|laptop|desktop|-pc\b|thinkpad|surface/i,'device','💻'],
+  [/keyboard|mouse|mx /i,'device','⌨️'],
+  [/tile|smarttag|airtag|tag\b/i,'device','🏷️'],
+];
+function hx(n,w=4){ return '0x'+n.toString(16).toUpperCase().padStart(w,'0'); }
+function identify(d){
+  const hints=[]; let cat=null, ic=null, guess='';
+  const brand = d.companyId!=null ? (COMPANY[d.companyId] || 'Company '+hx(d.companyId)) : '';
+  if(d.companyId===0x004C && d.appleType!=null && APPLE_TYPE[d.appleType]){
+    const [lab,c]=APPLE_TYPE[d.appleType]; guess='Apple '+lab; cat=c; hints.push('Apple Continuity type '+hx(d.appleType,2));
+  }
+  for(const u of d.services||[]){
+    const m = /^0000([0-9a-f]{4})-0000-1000-8000-00805f9b34fb$/i.exec(u);
+    const n = m ? parseInt(m[1],16) : null;
+    if(n!=null && SVC16[n]){ hints.push(SVC16[n][0]); if(!cat) cat=SVC16[n][1]; if(!guess && n===0xFD5A) guess='Samsung SmartTag'; if(!guess && n===0xFEED) guess='Tile tracker'; }
+  }
+  const nm = d.advName || '';
+  for(const [re,c,i] of NAME_RULES){ if(re.test(nm)){ cat=cat||c; ic=i; hints.push('name pattern'); break; } }
+  if(!cat && d.companyId===0x0075) { cat='phone'; hints.push('Samsung broadcast (often a Galaxy phone)'); }
+  if(!cat && d.companyId===0x0006) { cat='device'; hints.push('Windows device'); ic=ic||'💻'; }
+  cat = cat || 'device';
+  if(!ic) ic = cat==='phone' ? '📱' : (d.appleType===0x07?'🎧': d.appleType===0x12?'🏷️':'🔵');
+  if(!guess && brand) guess = brand + (cat==='phone' ? ' phone' : ' device');
+  return { cat, ic, brand, guess, hints };
+}
 function deviceLabel(d){
-  return names[d.id] || d.advName || (d.demo ? d.baseName : 'Unknown device') ;
+  return names[d.id] || d.advName || d.idGuess || (d.demo ? d.baseName : 'Unknown device');
 }
 function rssiToProx(rssi){ // 0 (far) .. 1 (right here)
   return Math.max(0, Math.min(1, (rssi + 100) / 70));
@@ -299,13 +378,22 @@ function upsert(id, patch){
   let d = state.devices.get(id);
   if(!d){
     d = { id, advName:'', baseName:'Device', rssi:-100, txPower:undefined,
-          services:[], lastSeen:0, demo:false, smooth:-100 };
+          services:[], lastSeen:0, demo:false, smooth:null, kP:8 };
     state.devices.set(id, d);
   }
   Object.assign(d, patch);
   d.lastSeen = Date.now();
-  // smooth rssi (EMA) for stable UI
-  d.smooth = d.smooth == null ? d.rssi : d.smooth * 0.75 + d.rssi * 0.25;
+  // 1-D Kalman filter on RSSI: much steadier than raw readings, still responsive
+  if(d.smooth == null){ d.smooth = d.rssi; d.kP = 8; }
+  else {
+    const Q = 0.6, R = 9;              // process noise (walking), measurement noise (BLE jitter)
+    d.kP += Q;
+    const K = d.kP / (d.kP + R);
+    d.smooth += K * (d.rssi - d.smooth);
+    d.kP *= (1 - K);
+  }
+  const idn = identify(d);
+  d.cat = idn.cat; d._ic = idn.ic; d.brand = idn.brand; d.idGuess = idn.guess; d.hints = idn.hints;
   if(id === state.trackedId) onTrackedUpdate(d);
   return d;
 }
@@ -339,8 +427,20 @@ function onAdv(e){
   const id = e.device.id || e.device.name || 'dev';
   const services = [];
   e.uuids && e.uuids.forEach(u=>services.push(u));
+  e.serviceData && e.serviceData.forEach((_,u)=>{ if(!services.includes(u)) services.push(u); });
+  let companyId=null, appleType=null, mfrHex='';
+  if(e.manufacturerData && e.manufacturerData.size){
+    for(const [cid, dv] of e.manufacturerData){
+      companyId = cid;
+      const bytes=[]; for(let i=0;i<Math.min(dv.byteLength,12);i++) bytes.push(dv.getUint8(i).toString(16).padStart(2,'0'));
+      mfrHex = bytes.join(' ');
+      if(cid===0x004C && dv.byteLength) appleType = dv.getUint8(0);
+      break;
+    }
+  }
   upsert(id, {
-    advName: e.device.name || e.deviceName || '',
+    companyId, appleType, mfrHex,
+    advName: e.device.name || e.name || '',
     baseName: e.device.name || 'Bluetooth device',
     rssi: e.rssi ?? -100,
     txPower: e.txPower,
@@ -361,17 +461,19 @@ function stopRealScan(){
 // ============================================================
 let demoTimer=null;
 const demoSeed = [
-  {id:'demo-1', baseName:'Pixel 8 (demo)', ic:'📱', bearing: 40,  dist: 22, tx:-59},
-  {id:'demo-2', baseName:'iPhone (demo)',  ic:'📱', bearing: 300, dist: 9,  tx:-55},
-  {id:'demo-3', baseName:'AirPods (demo)', ic:'🎧', bearing: 150, dist: 35, tx:-62},
-  {id:'demo-4', baseName:'Galaxy Watch (demo)', ic:'⌚', bearing: 210, dist: 14, tx:-58},
-  {id:'demo-5', baseName:'Unknown (demo)', ic:'🔵', bearing: 95,  dist: 48, tx:-60},
+  {id:'demo-1', baseName:'Pixel 8 (demo)', ic:'📱', bearing: 40,  dist: 22, tx:-59, cid:0x00E0},
+  {id:'demo-2', baseName:'', ic:'📱', bearing: 300, dist: 9,  tx:-55, cid:0x004C, at:0x10},
+  {id:'demo-3', baseName:'AirPods (demo)', ic:'🎧', bearing: 150, dist: 35, tx:-62, cid:0x004C, at:0x07},
+  {id:'demo-4', baseName:'Galaxy Watch (demo)', ic:'⌚', bearing: 210, dist: 14, tx:-58, cid:0x0075},
+  {id:'demo-5', baseName:'Galaxy S24 (demo)', ic:'📱', bearing: 95,  dist: 48, tx:-60, cid:0x0075},
+  {id:'demo-6', baseName:'', ic:'🔵', bearing: 250, dist: 18, tx:-60, cid:0x02E5},
 ];
 function startDemoScan(){
   for(const s of demoSeed){
-    const d = upsert(s.id, { baseName:s.baseName, advName:s.baseName, demo:true,
-      txPower:s.tx, services:['demo-service'] });
-    d._bearing = s.bearing; d._dist = s.dist; d._ic = s.ic;
+    const d = upsert(s.id, { baseName:s.baseName || 'Device (demo)', advName:s.baseName, demo:true,
+      txPower:s.tx, services:[], companyId:s.cid ?? null, appleType:s.at ?? null,
+      mfrHex: s.at!=null ? s.at.toString(16).padStart(2,'0')+' 05 ab 1c (demo)' : '' });
+    d._bearing = s.bearing; d._dist = s.dist;
   }
   setScanning(true);
   demoTimer = setInterval(demoTick, 600);
@@ -454,33 +556,50 @@ function sigBars(rssi){
 }
 function renderList(){
   const list = $('#list');
-  const arr = [...state.devices.values()].sort((a,b)=> b.smooth - a.smooth);
-  $('#count').textContent = arr.length;
-  if(arr.length===0){
+  const all = [...state.devices.values()].sort((a,b)=> b.smooth - a.smooth);
+  const phones = all.filter(d=>d.cat==='phone'), devs = all.filter(d=>d.cat!=='phone');
+  $('#count').textContent = all.length;
+  $('#nAll').textContent = all.length; $('#nPhone').textContent = phones.length; $('#nDev').textContent = devs.length;
+  if(all.length===0){
     list.innerHTML = '<div class="empty" id="listEmpty">No devices yet. Tap <b>Scan</b> to look for nearby Bluetooth devices.</div>';
     return;
   }
-  list.innerHTML = arr.map(d=>{
+  const groups = state.filter==='phone' ? [['📱 Phones & tablets',phones]]
+               : state.filter==='device' ? [['🎧 Other devices',devs]]
+               : [['📱 Phones & tablets',phones],['🎧 Other devices',devs]];
+  list.innerHTML = groups.map(([title,arr])=>
+    `<div class="group-h">${title} · ${arr.length}</div>` +
+    (arr.length ? arr.map(rowHtml).join('') : '<div class="empty">None found yet.</div>')
+  ).join('');
+  bindRows(list);
+}
+function rowHtml(d){
     const tracked = d.id===state.trackedId;
-    const ic = d._ic || (d.advName ? '📱' : '🔵');
+    const ic = d._ic || '🔵';
+    const sub = names[d.id] && (d.advName||d.idGuess) ? escapeHtml(d.advName||d.idGuess)+' · ' : (d.brand && !d.advName ? '' : (d.brand? escapeHtml(d.brand)+' · ':''));
     const dist = fmtDist(rssiToDistance(d.smooth, d.txPower));
     return `<div class="device ${tracked?'tracked':''}" data-id="${d.id}">
       <div class="dev-ic">${ic}</div>
       <div class="dev-main">
-        <div class="dev-name">${escapeHtml(deviceLabel(d))}</div>
-        <div class="dev-meta">${Math.round(d.smooth)} dBm · ~${dist}</div>
+        <div class="dev-name">${escapeHtml(deviceLabel(d))}${d.cat==='phone'?'<span class="tag phone">PHONE</span>':''}</div>
+        <div class="dev-meta">${sub}${Math.round(d.smooth)} dBm · ~${dist}</div>
       </div>
       ${sigBars(d.smooth)}
       <div class="dev-track">${tracked?'TRACKING':'Track'}</div>
     </div>`;
-  }).join('');
-  // bind
+}
+function bindRows(list){
   list.querySelectorAll('.device').forEach(el=>{
     const id = el.getAttribute('data-id');
     el.querySelector('.dev-track').onclick = (ev)=>{ ev.stopPropagation(); toggleTrack(id); };
     el.onclick = ()=> openSheet(id);
   });
 }
+document.querySelectorAll('#tabs .tab').forEach(t=> t.onclick = ()=>{
+  state.filter = t.dataset.f;
+  document.querySelectorAll('#tabs .tab').forEach(x=>x.classList.toggle('on', x===t));
+  renderList();
+});
 function escapeHtml(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 // ============================================================
@@ -494,11 +613,16 @@ function openSheet(id){
   $('#renameInput').value = names[id] || '';
   const dist = fmtDist(rssiToDistance(d.smooth, d.txPower));
   const rows = [
-    ['Advertised name', d.advName || '— (not broadcast)'],
+    ['Advertised name', escapeHtml(d.advName) || '— (not broadcast)'],
+    ['Identified as', escapeHtml(d.idGuess || 'Unknown')],
+    ['Category', d.cat==='phone' ? '📱 Phone / tablet' : '🎧 Other device'],
+    ['Maker', escapeHtml(d.brand) || '— (not broadcast)'],
+    ['How we know', escapeHtml((d.hints||[]).join(', ')) || '—'],
+    ['Maker data', d.mfrHex ? '<span class="mono">'+d.mfrHex+'</span>' : '—'],
     ['Signal strength', Math.round(d.smooth)+' dBm'],
     ['Est. distance', '~'+dist],
     ['Tx power', (d.txPower!=null? d.txPower+' dBm':'— (unknown)')],
-    ['Services', d.services.length? d.services.join(', ') : '—'],
+    ['Services', d.services.length? escapeHtml(d.services.join(', ')) : '—'],
     ['Device ID', '<span class="mono">'+escapeHtml(id)+'</span>'],
   ];
   $('#details').innerHTML = rows.map(r=>`<div class="kv"><span class="k">${r[0]}</span><span class="v">${r[1]}</span></div>`).join('');
@@ -526,7 +650,7 @@ $('#sheetTrack').onclick = ()=>{ const id=state.sheetId; closeSheet(); toggleTra
 function toggleTrack(id){
   if(state.trackedId === id){ stopTracking(); return; }
   state.trackedId = id;
-  state.headingRssi = {}; state.bestHeading=null;
+  state.headingRssi = {}; state.bestHeading=null; $('#dirConf').textContent='';
   const d = state.devices.get(id);
   $('#finderEmpty').style.display='none';
   $('#finderActive').style.display='block';
@@ -555,13 +679,11 @@ function onTrackedUpdate(d){
   // beep cadence
   updateBeep(prox);
   // direction sampling
-  if(state.heading!=null){
+  if(state.heading!=null && !state.demoSweep){
     const bucket = Math.round(((state.heading%360)+360)%360 / 15)*15 % 360;
     const prev = state.headingRssi[bucket];
     state.headingRssi[bucket] = prev==null ? d.smooth : prev*0.6 + d.smooth*0.4;
-    let best=null,bestV=-999;
-    for(const k in state.headingRssi){ if(state.headingRssi[k]>bestV){bestV=state.headingRssi[k];best=+k;} }
-    state.bestHeading = best;
+    state.bestHeading = estimateBearing();
   }
   updateArrow();
 }
@@ -578,6 +700,25 @@ function updateHotCold(prox){
   else { el.textContent='• Hold steady, move slowly'; el.style.color='var(--muted)'; }
 }
 
+// Direction from compass + signal: your body blocks Bluetooth behind you, so the
+// signal is strongest when you FACE the device. We take a weighted circular mean
+// of the strongest headings (smoother than just picking the single max bucket).
+function estimateBearing(){
+  const ks = Object.keys(state.headingRssi).map(Number);
+  if(ks.length < 4){ $('#dirConf').textContent = ks.length ? 'Keep turning… ('+ks.length+'/24 directions sampled)' : ''; return null; }
+  const vals = ks.map(k=>state.headingRssi[k]);
+  const mx = Math.max(...vals), mn = Math.min(...vals);
+  let sx=0, sy=0;
+  ks.forEach(k=>{
+    const w = Math.pow(Math.max(0, state.headingRssi[k] - (mx - 6)), 2); // only top ~6 dB matter
+    sx += w*Math.cos(k*Math.PI/180); sy += w*Math.sin(k*Math.PI/180);
+  });
+  const spread = mx - mn;
+  const conf = ks.length < 12 ? 'low (turn further)' : spread >= 8 ? 'good' : spread >= 4 ? 'fair' : 'low — signal similar all around, move a few steps and retry';
+  $('#dirConf').textContent = 'Direction confidence: ' + conf;
+  if(sx===0 && sy===0) return null;
+  return ((Math.atan2(sy,sx)*180/Math.PI)+360)%360;
+}
 function updateArrow(){
   const a=$('#arrow');
   if(state.bestHeading==null || state.heading==null){
@@ -612,7 +753,7 @@ async function enableCompass(){
 }
 $('#calibBtn').onclick = async ()=>{
   const ok = await enableCompass();
-  if(ok){
+  if(ok || state.demo){
     state.headingRssi={}; state.bestHeading=null;
     $('#calibHint').innerHTML='📡 <b>Now turn slowly all the way around</b> (once). The arrow will lock onto the strongest signal direction.';
     if(state.demo) demoCompassAssist();
@@ -624,6 +765,7 @@ let demoHeadingTimer=null;
 function demoCompassAssist(){
   if(state.heading!=null) return; // real compass present
   clearInterval(demoHeadingTimer);
+  state.demoSweep = true;
   let h=0;
   demoHeadingTimer=setInterval(()=>{
     h=(h+18)%360; state.heading=h;
@@ -633,11 +775,9 @@ function demoCompassAssist(){
       const diff=Math.abs(((h-d._bearing+540)%360)-180);
       const boost = (180-diff)/180; // 1 when aligned
       state.headingRssi[Math.round(h/15)*15%360] = -90 + boost*55 + (Math.random()*4);
-      let best=null,bestV=-999;
-      for(const k in state.headingRssi){ if(state.headingRssi[k]>bestV){bestV=state.headingRssi[k];best=+k;} }
-      state.bestHeading=best; updateArrow();
+      state.bestHeading=estimateBearing(); updateArrow();
     }
-    if(h===0){ clearInterval(demoHeadingTimer); $('#calibHint').innerHTML='✅ Direction locked (demo). In real use, keep turning if the arrow looks wrong.'; }
+    if(h===0){ clearInterval(demoHeadingTimer); state.heading = 0; $('#calibHint').innerHTML='✅ Direction locked (demo). In real use, keep turning if the arrow looks wrong.'; }
   },220);
 }
 
